@@ -235,3 +235,38 @@ Use one section per experiment and keep it commit-worthy.
 - Command: python frameworks/transformers/scripts/single_query_benchmark.py
 - Artifact paths: frameworks/transformers/artifacts/single-query-benchmark-20260325-064802.json
 - Notes: the intended 4k-token probe landed at 3436 tokens after chat templating and tokenization, which was still sufficient to expose prompt-length scaling behavior.
+
+---
+
+## First experiment summary
+
+The first experiment established the plain Hugging Face Transformers baseline for Qwen3.5-9B on the RTX 4090 using eager attention and no optimized runtime.
+
+What we did:
+- created an isolated `frameworks/transformers` subproject with its own `pyproject.toml` and `.venv`
+- ran an initial one-prompt smoke test to confirm the model fit and generated correctly
+- replaced that smoke test with a structured warm single-query benchmark
+- extended the benchmark with simple prompt-side timing metrics and one very long prompt probe
+
+What we learned:
+- plain eager-mode Transformers works on the RTX 4090 with Qwen3.5-9B in bfloat16
+- cold load is about 19 seconds on this setup
+- for normal short-to-long prompts, warm first-token latency is roughly 0.23 to 0.30 seconds
+- warm total latency for 256 generated tokens is roughly 10.8 to 10.9 seconds
+- post-first-token decode speed is about 24 tok/s and stays fairly stable across prompt lengths
+- tokenization cost is negligible here; longer prompts mainly show up in first-token latency and VRAM
+- the 3436-token prompt probe raised first-token latency to about 1.53 seconds and peak VRAM to about 18.81 GiB
+
+Quality interpretation for this experiment:
+- output quality does not need to be polished yet
+- it only needs to be sensible enough to show the model is actually responding to the prompts
+- current outputs are coherent and on-topic, so the baseline is valid for latency work
+- the remaining quality issue is mostly output style and stopping behavior, not obvious model failure
+
+Reference baseline to compare future runtimes against:
+- total load: 19.0326 s
+- warm TTFT from raw input: 0.2705 s median
+- warm total latency: 10.8204 s median
+- warm overall tok/s: 23.6591 median
+- warm decode tok/s post-TTFT: 24.2253 median
+- warm peak VRAM: 16.7675 GiB median
