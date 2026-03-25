@@ -174,3 +174,64 @@ Use one section per experiment and keep it commit-worthy.
 - Command: python frameworks/transformers/scripts/single_query_benchmark.py
 - Artifact paths: frameworks/transformers/artifacts/single-query-benchmark-20260325-055129.json
 - Notes: compared with the earlier 128-token smoke test, the structured benchmark gives a cleaner steady-state picture and slightly higher measured tok/s because startup overhead matters less at 256 generated tokens.
+
+---
+
+### Experiment: qwen35-9b-plain-transformers-eager-single-query-benchmark-2-prefill
+- Date: 2026-03-25
+- Status: completed
+- Goal: Extend the warm single-query benchmark with basic prompt-side timing metrics and one very long prompt probe to better understand prompt-length scaling.
+- Hypothesis: tokenization itself should stay cheap, but prompt-side first-token latency and VRAM should rise noticeably on a ~4k-token prompt.
+- Owner: Hermes
+
+#### Setup
+- Model: Qwen/Qwen3.5-9B
+- Runtime / serving stack: Hugging Face Transformers local Python benchmark script
+- Precision / quantization: bfloat16, no quantization
+- Hardware: NVIDIA GeForce RTX 4090 24GB
+- CUDA / driver notes: driver 591.44; torch 2.11.0 CUDA 13 wheels; transformers 5.3.0
+- Batch size: 1
+- Max context length: measured prompt lengths ranged from 31 to 3436 input tokens; one extra very long prompt was added to probe prefill-like scaling
+- Input prompt length: 11 prompts across short, medium, long, and verylong buckets
+- Output length: 256 tokens max_new_tokens for every measured run
+- Dataset / prompts used: prior 10 deterministic prompts plus one very long context prompt for prompt-side latency probing; 1 extra warmup prompt excluded from summary metrics
+
+#### Parameters
+- attn_implementation: eager
+- do_sample: false
+- max_new_tokens: 256
+- warmup runs: 1 excluded from summary
+- trust_remote_code: true
+- added metrics: tokenization_time_s, raw_to_ready_s, ttft_from_generate_s, ttft_from_raw_input_s
+
+#### Measurements
+- Throughput (tok/s): not a throughput benchmark; this experiment targets warm single-query latency only
+- Tokenization time: overall median 0.0006 s; verylong prompt 0.0064 s
+- Prompt prep time (raw_to_ready_s): overall median 0.0008 s; verylong prompt 0.0068 s
+- Time to first token from generate start: overall median 0.2697 s; short median 0.2258 s; medium median 0.2692 s; long median 0.3017 s; verylong 1.5270 s
+- Time to first token from raw input: overall median 0.2705 s; short median 0.2265 s; medium median 0.2700 s; long median 0.3039 s; verylong 1.5338 s
+- End-to-end latency: overall median 10.8204 s; short median 10.8204 s; medium median 10.8042 s; long median 10.8934 s; verylong 12.1662 s
+- Peak VRAM: overall median 16.7675 GiB; short median 16.7539 GiB; medium median 16.7670 GiB; long median 16.8964 GiB; verylong 18.8077 GiB
+- Average VRAM: not measured
+- CPU / RAM notes: not measured
+- Overall generated tokens / second: overall median 23.6591 tok/s
+- Decode speed after first token: overall median 24.2253 tok/s; verylong 24.0621 tok/s
+- Load metrics: tokenizer_load_s 1.9016; model_load_s 17.1310; total_load_s 19.0326
+- Warmup excluded run: tokenization_time_s 0.0059; raw_to_ready_s 0.0233; ttft_from_generate_s 1.2949; ttft_from_raw_input_s 1.3182; total_latency_s 11.8654; overall_tok_s 21.5753; decode_tok_s_post_ttft 24.2184; peak_vram_gib 16.7533
+
+#### Quality canaries
+- Canary set: 11 deterministic prompts across short, medium, long, and verylong buckets
+- Observed regressions: every measured run hit the 256-token cap; no run ended cleanly; outputs consistently started with a Thinking Process style even when prompts requested direct or concise answers
+- Observed improvements: prompt-side scaling is now visible in a simple way without deeper instrumentation; the verylong prompt showed that tokenization remained tiny while first-token latency and peak VRAM rose sharply
+- Failure examples: the verylong prompt increased ttft_from_raw_input_s to 1.5338 s and peak_vram_gib to 18.8077, while still producing chain-of-thought-style output and hitting the token cap
+
+#### Outcome
+- Result summary: this benchmark version is a better reference for future runtime comparisons because it separates prompt prep from first-token latency and adds a long-context stress point. For normal short-to-long prompts, tokenization is negligible, warm first-token latency is roughly 0.23 to 0.30 s, and decode speed stays near 24 tok/s. The 3436-token prompt makes prompt-side latency the dominant change: ttft_from_raw_input_s rises to 1.5338 s, end-to-end latency to 12.1662 s, and peak VRAM to 18.8077 GiB.
+- Decision: use this version as the primary plain-Transformers single-query baseline.
+- Next step: compare faster runtimes against this same benchmark structure.
+
+#### Repro
+- Commit: pending commit of benchmark update and results
+- Command: python frameworks/transformers/scripts/single_query_benchmark.py
+- Artifact paths: frameworks/transformers/artifacts/single-query-benchmark-20260325-064802.json
+- Notes: the intended 4k-token probe landed at 3436 tokens after chat templating and tokenization, which was still sufficient to expose prompt-length scaling behavior.

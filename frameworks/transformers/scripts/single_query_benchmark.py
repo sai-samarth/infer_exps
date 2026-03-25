@@ -151,6 +151,19 @@ PROMPTS = [
             }
         ],
     },
+    {
+        "name": "verylong_prefill_probe_4k",
+        "bucket": "verylong",
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "Read the long context below and then answer in 3 short bullets: what matters most for fair single-query inference benchmarking?\n\n"
+                    + make_long_blob("Very long context", 100)
+                ),
+            }
+        ],
+    },
 ]
 
 WARMUP_MESSAGES = [
@@ -196,14 +209,29 @@ def prepare_text(tokenizer, messages):
     return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
 
-def run_one(model, tokenizer, messages, run_name, bucket):
+def tokenize_inputs(tokenizer, model, messages):
+    raw_start = time.perf_counter()
     text = prepare_text(tokenizer, messages)
+    token_start = time.perf_counter()
     inputs = tokenizer(text, return_tensors="pt")
+    token_end = time.perf_counter()
     device = model.device
     if device.type == "cuda":
         inputs = {k: v.to(device) for k, v in inputs.items()}
+    move_end = time.perf_counter()
+    return {
+        "text": text,
+        "inputs": inputs,
+        "raw_to_ready_s": move_end - raw_start,
+        "tokenization_time_s": token_end - token_start,
+        "prompt_tokens": int(inputs["input_ids"].shape[-1]),
+    }
 
-    prompt_tokens = int(inputs["input_ids"].shape[-1])
+
+def run_one(model, tokenizer, messages, run_name, bucket):
+    prep = tokenize_inputs(tokenizer, model, messages)
+    inputs = prep["inputs"]
+    prompt_tokens = prep["prompt_tokens"]
     streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
     holder = {}
     error_holder = {}
@@ -227,7 +255,7 @@ def run_one(model, tokenizer, messages, run_name, bucket):
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
 
-    start = time.perf_counter()
+    generate_start = time.perf_counter()
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
 
@@ -250,8 +278,8 @@ def run_one(model, tokenizer, messages, run_name, bucket):
     output_tokens = int(generated_ids.shape[-1])
     generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
 
-    ttft_s = None if first_token_time is None else first_token_time - start
-    total_latency_s = end - start
+    ttft_from_generate_s = None if first_token_time is None else first_token_time - generate_start
+    ttft_from_raw_input_s = None if first_token_time is None else prep["raw_to_ready_s"] + ttft_from_generate_s
     decode_only_s = None if first_token_time is None else max(end - first_token_time, 1e-9)
     decode_tok_s_post_ttft = None
     if output_tokens > 0 and decode_only_s is not None:
@@ -262,9 +290,12 @@ def run_one(model, tokenizer, messages, run_name, bucket):
         "bucket": bucket,
         "prompt_tokens": prompt_tokens,
         "output_tokens": output_tokens,
-        "ttft_s": round(ttft_s, 4) if ttft_s is not None else None,
-        "total_latency_s": round(total_latency_s, 4),
-        "overall_tok_s": round(output_tokens / total_latency_s, 4) if total_latency_s > 0 else None,
+        "tokenization_time_s": round(prep["tokenization_time_s"], 4),
+        "raw_to_ready_s": round(prep["raw_to_ready_s"], 4),
+        "ttft_from_generate_s": round(ttft_from_generate_s, 4) if ttft_from_generate_s is not None else None,
+        "ttft_from_raw_input_s": round(ttft_from_raw_input_s, 4) if ttft_from_raw_input_s is not None else None,
+        "total_latency_s": round(end - generate_start, 4),
+        "overall_tok_s": round(output_tokens / (end - generate_start), 4) if (end - generate_start) > 0 else None,
         "decode_tok_s_post_ttft": round(decode_tok_s_post_ttft, 4) if decode_tok_s_post_ttft is not None else None,
         "peak_vram_gib": round(cuda_peak_gib(), 4),
         "generated_text_preview": generated_text[:300],
@@ -273,7 +304,18 @@ def run_one(model, tokenizer, messages, run_name, bucket):
 
 
 def build_summary(runs):
-    metrics = ["prompt_tokens", "output_tokens", "ttft_s", "total_latency_s", "overall_tok_s", "decode_tok_s_post_ttft", "peak_vram_gib"]
+    metrics = [
+        "prompt_tokens",
+        "output_tokens",
+        "tokenization_time_s",
+        "raw_to_ready_s",
+        "ttft_from_generate_s",
+        "ttft_from_raw_input_s",
+        "total_latency_s",
+        "overall_tok_s",
+        "decode_tok_s_post_ttft",
+        "peak_vram_gib",
+    ]
     out = {"overall": {}, "by_bucket": {}}
     for metric in metrics:
         vals = [r[metric] for r in runs if r.get(metric) is not None]
