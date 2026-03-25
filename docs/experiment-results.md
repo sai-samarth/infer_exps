@@ -270,3 +270,63 @@ Reference baseline to compare future runtimes against:
 - warm overall tok/s: 23.6591 median
 - warm decode tok/s post-TTFT: 24.2253 median
 - warm peak VRAM: 16.7675 GiB median
+
+---
+
+### Experiment: qwen35-9b-vllm-single-query-benchmark-clean-1
+- Date: 2026-03-25
+- Status: completed
+- Goal: Run a clean, reproducible vLLM baseline for Qwen3.5-9B from the project-local uv-created environment and compare it against the plain Transformers baseline.
+- Hypothesis: a clean local vLLM server should beat plain eager-mode Transformers on TTFT, total latency, and decode speed, at the cost of significantly higher resident VRAM.
+- Owner: Hermes
+
+#### Setup
+- Model: Qwen/Qwen3.5-9B
+- Runtime / serving stack: project-local vLLM OpenAI-compatible server launched from frameworks/vllm/.venv
+- Precision / quantization: bfloat16, no quantization
+- Hardware: NVIDIA GeForce RTX 4090 24GB
+- CUDA / driver notes: driver 591.44; local uv env uses Python 3.11.14, vLLM 0.18.1rc1.dev107+ge9ae3f807, torch 2.10.0+cu130, transformers 4.57.6
+- Batch size: 1 requests issued sequentially from the benchmark client
+- Max context length: server launched with max_model_len 4096; benchmark prompt lengths ranged from 31 to 3436 tokens
+- Input prompt length: 11 prompts across short, medium, long, and verylong buckets
+- Output length: 256 tokens max_tokens for every measured run
+- Dataset / prompts used: same deterministic prompt set used for the plain Transformers benchmark, plus one warmup prompt excluded from summary
+
+#### Parameters
+- Launch command family: python -m vllm.entrypoints.openai.api_server from frameworks/vllm/.venv
+- Server flags used: gpu_memory_utilization 0.92, max_model_len 4096, tensor_parallel_size 1, language_model_only, trust_remote_code, reasoning_parser qwen3, enforce_eager, max_num_seqs 1
+- Served model name: Qwen/Qwen3.5-9B
+- Warmup runs: 1 excluded from summary
+- Benchmark client metrics: tokenization_time_s, raw_to_ready_s, ttft_from_request_s, ttft_from_raw_input_s, total_latency_s, overall_tok_s, decode_tok_s_post_ttft, resident_vram_gib
+
+#### Measurements
+- Throughput (tok/s): not a throughput benchmark; this experiment targets warm single-query latency only
+- Tokenization time: overall median 0.0004 s; verylong prompt 0.0050 s
+- Prompt prep time (raw_to_ready_s): overall median 0.0005 s; verylong prompt 0.0052 s
+- Time to first token from request start: overall median 0.0867 s; short median 0.0843 s; medium median 0.0854 s; long median 0.0943 s with some variance; verylong 0.3907 s
+- Time to first token from raw input: overall median 0.0872 s; short median 0.0847 s; medium median 0.0859 s; long median 0.0958 s with some variance; verylong 0.3959 s
+- End-to-end latency: overall median 7.1702 s; short median 7.1685 s; medium median 7.1764 s; long median 7.1570 s; verylong 7.4712 s
+- Resident VRAM: overall median 22.1133 GiB; short median 22.1074 GiB; medium median 22.1133 GiB; long median 22.1523 GiB; verylong 22.4414 GiB
+- Average VRAM: not measured; resident vLLM allocation is effectively flat during the run
+- CPU / RAM notes: not measured
+- Overall generated tokens / second: overall median 35.7032 tok/s
+- Decode speed after first token: overall median 36.1558 tok/s; verylong 36.1558 tok/s
+- Client tokenizer load: 0.9712 s
+- Warmup excluded run: ttft_from_request_s 0.4197; ttft_from_raw_input_s 0.4375; total_latency_s 7.5286; overall_tok_s 34.0037; decode_tok_s_post_ttft 36.0109; resident_vram_gib 22.1055
+
+#### Quality canaries
+- Canary set: same 11 deterministic prompts used for the Transformers benchmark
+- Observed regressions: outputs still default to a Thinking Process style and still hit the 256-token cap
+- Observed improvements: output remained coherent and on-topic while latency improved strongly over the plain Transformers baseline
+- Failure examples: no broken or incoherent outputs observed in smoke test or benchmark previews; the main issue remains verbosity and stopping behavior
+
+#### Outcome
+- Result summary: the clean local uv-based vLLM server is materially faster than the plain Transformers baseline. Median TTFT from raw input improved from 0.2705 s to 0.0872 s, median total latency improved from 10.8204 s to 7.1702 s, median overall tok/s improved from 23.6591 to 35.7032, and median post-TTFT decode speed improved from 24.2253 tok/s to 36.1558 tok/s. The cost is high resident VRAM, about 22.11 GiB median versus about 16.77 GiB for the Transformers baseline.
+- Decision: use this as the clean reproducible vLLM baseline for the project.
+- Next step: compare against additional runtimes or tune vLLM parameters if we want a different memory/latency tradeoff.
+
+#### Repro
+- Commit: pending commit of clean vLLM scripts and results
+- Command: OPENAI_BASE_URL=http://127.0.0.1:8011/v1 SERVER_MODEL_ID=Qwen/Qwen3.5-9B TOKENIZER_ID=Qwen/Qwen3.5-9B frameworks/vllm/.venv/bin/python frameworks/vllm/scripts/vllm_single_query_benchmark.py
+- Artifact paths: frameworks/vllm/artifacts/single-query-benchmark-vllm-20260325-122128.json
+- Notes: launch at gpu_memory_utilization 0.93 failed due to insufficient free memory; gpu_memory_utilization 0.92 worked reliably on this machine while still leaving enough room for the 3436-token probe.
