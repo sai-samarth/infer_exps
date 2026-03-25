@@ -116,3 +116,61 @@ Use one section per experiment and keep it commit-worthy.
 - Command: python frameworks/transformers/scripts/plain_baseline.py
 - Artifact paths: frameworks/transformers/artifacts/plain-baseline-20260325-052927.json
 - Notes: tokenizer load was 1.864 s and model load was 17.6506 s in the measured run.
+
+---
+
+### Experiment: qwen35-9b-plain-transformers-eager-single-query-benchmark-1
+- Date: 2026-03-25
+- Status: completed
+- Goal: Replace the one-off smoke test with a more reliable warm single-query benchmark for the plain Hugging Face Transformers baseline.
+- Hypothesis: With warmup excluded and output length fixed at 256 tokens, plain eager-mode Transformers should show stable single-query latency on the RTX 4090, with TTFT rising modestly for longer prompts.
+- Owner: Hermes
+
+#### Setup
+- Model: Qwen/Qwen3.5-9B
+- Runtime / serving stack: Hugging Face Transformers local Python benchmark script
+- Precision / quantization: bfloat16, no quantization
+- Hardware: NVIDIA GeForce RTX 4090 24GB
+- CUDA / driver notes: driver 591.44; torch 2.11.0 CUDA 13 wheels; transformers 5.3.0
+- Batch size: 1
+- Max context length: benchmark prompt lengths ranged from 31 to 692 input tokens; model card says 262,144 native context
+- Input prompt length: 10 prompts across short, medium, and long buckets
+- Output length: 256 tokens max_new_tokens for every measured run
+- Dataset / prompts used: 10 hand-written deterministic prompts for benchmark design, summarization, extraction, and long-context canaries; 1 extra warmup prompt excluded from summary metrics
+
+#### Parameters
+- attn_implementation: eager
+- do_sample: false
+- max_new_tokens: 256
+- warmup runs: 1 excluded from summary
+- trust_remote_code: true
+- metric summaries: mean, median, p95, min, max
+
+#### Measurements
+- Throughput (tok/s): not a throughput benchmark; this experiment targets warm single-query latency only
+- Time to first token: overall median 0.2777 s; short median 0.2303 s; medium median 0.2777 s; long median 0.2953 s
+- End-to-end latency: overall median 10.9244 s; short median 10.8945 s; medium median 10.9244 s; long median 10.9872 s
+- Peak VRAM: overall median 16.7670 GiB; short median 16.7539 GiB; medium median 16.7670 GiB; long median 16.8964 GiB
+- Average VRAM: not measured
+- CPU / RAM notes: not measured
+- Overall generated tokens / second: overall median 23.4339 tok/s
+- Decode speed after first token: overall median 23.9922 tok/s; short median 23.9934 tok/s; medium median 24.0088 tok/s; long median 23.9431 tok/s
+- Load metrics: tokenizer_load_s 2.0319; model_load_s 17.5691; total_load_s 19.6010
+- Warmup excluded run: ttft_s 1.1382; total_latency_s 11.7613; overall_tok_s 21.7663; decode_tok_s_post_ttft 24.0985; peak_vram_gib 16.7533
+
+#### Quality canaries
+- Canary set: 10 deterministic prompts across short, medium, and long buckets
+- Observed regressions: every measured run hit the 256-token cap; no run ended cleanly; outputs consistently started with a Thinking Process style even when prompts requested direct or concise answers
+- Observed improvements: latency measurements were much cleaner and more stable than the original one-prompt smoke test; prompt length affected TTFT and VRAM as expected but had only a small effect on steady-state decode speed
+- Failure examples: short and medium prompts frequently produced long chain-of-thought-style continuations instead of concise direct answers
+
+#### Outcome
+- Result summary: the structured benchmark gives a materially better single-query baseline than the original smoke test. Warm plain eager-mode Transformers on the RTX 4090 deliver about 0.28 s median TTFT, 10.92 s median end-to-end latency for 256 generated tokens, about 23.43 overall tok/s, and about 23.99 tok/s post-TTFT decode speed.
+- Decision: use this benchmark as the reference warm single-query baseline for future runtime comparisons.
+- Next step: improve output-control canaries if needed, then compare against faster runtimes using the same benchmark structure.
+
+#### Repro
+- Commit: pending commit of benchmark script and results
+- Command: python frameworks/transformers/scripts/single_query_benchmark.py
+- Artifact paths: frameworks/transformers/artifacts/single-query-benchmark-20260325-055129.json
+- Notes: compared with the earlier 128-token smoke test, the structured benchmark gives a cleaner steady-state picture and slightly higher measured tok/s because startup overhead matters less at 256 generated tokens.
