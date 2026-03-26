@@ -330,3 +330,55 @@ Reference baseline to compare future runtimes against:
 - Command: OPENAI_BASE_URL=http://127.0.0.1:8011/v1 SERVER_MODEL_ID=Qwen/Qwen3.5-9B TOKENIZER_ID=Qwen/Qwen3.5-9B frameworks/vllm/.venv/bin/python frameworks/vllm/scripts/vllm_single_query_benchmark.py
 - Artifact paths: frameworks/vllm/artifacts/single-query-benchmark-vllm-20260325-122128.json
 - Notes: launch at gpu_memory_utilization 0.93 failed due to insufficient free memory; gpu_memory_utilization 0.92 worked reliably on this machine while still leaving enough room for the 3436-token probe.
+
+---
+
+### Experiment: qwen35-9b-w4a16-vllm-sharegpt-plan-1
+- Date: 2026-03-26
+- Status: planned
+- Goal: Quantize Qwen/Qwen3.5-9B to W4A16, benchmark it in vLLM against the clean BF16 vLLM baseline, and publish the resulting checkpoint to Hugging Face.
+- Hypothesis: W4A16 should reduce memory pressure and may improve latency and/or token throughput on the RTX 4090 while staying within an acceptable quality sanity budget.
+- Owner: Hermes
+
+#### Setup
+- Model: Qwen/Qwen3.5-9B
+- Runtime / serving stack: local llm-compressor quantization followed by local vLLM serving
+- Precision / quantization: planned GPTQ W4A16, ignoring lm_head
+- Hardware: NVIDIA GeForce RTX 4090 24GB on iom4090
+- CUDA / driver notes: to be recorded from the actual quantization and serving environments at execution time
+- Batch size: 1 for serving benchmark
+- Max context length: planned vLLM benchmark max_model_len 4096 for comparability with the clean BF16 baseline
+- Input prompt length: same benchmark prompt set used for current BF16 vLLM baseline
+- Output length: same 256-token cap used in the current benchmark harness
+- Dataset / prompts used: planned calibration on ShareGPT-style chat data from HuggingFaceH4/ultrachat_200k, initial target 512 calibration samples and 2048 max sequence length
+
+#### Parameters
+- Quantization recipe: GPTQModifier targets=Linear, scheme=W4A16, ignore=["lm_head"]
+- Calibration source: HuggingFaceH4/ultrachat_200k, explicitly described as ShareGPT-style chat calibration in final docs/model card
+- Publish target: public Hugging Face repo `sai-samarth/Qwen3.5-9B-W4A16`
+- Model card requirement: include fuller provenance, calibration details, software versions, benchmark setup, and an explicit ShareGPT-style calibration description
+
+#### Measurements
+- Throughput (tok/s): planned same single-query metrics as current baseline
+- Time to first token: planned comparison against BF16 vLLM baseline
+- End-to-end latency: planned comparison against BF16 vLLM baseline
+- Peak VRAM: planned resident vLLM memory comparison against BF16 vLLM baseline
+- Average VRAM: not currently planned
+- CPU / RAM notes: if useful during execution
+
+#### Quality canaries
+- Canary set: same current benchmark prompts, with possible later expansion to a larger sanity set if needed
+- Observed regressions: pending run
+- Observed improvements: pending run
+- Failure examples: pending run
+
+#### Outcome
+- Result summary: pending run
+- Decision: pending run
+- Next step: scaffold quantization code and environment, then execute the W4A16 workflow in a fresh local setup.
+
+#### Repro
+- Commit: planning scaffold commit pending
+- Command: pending run
+- Artifact paths: planned under frameworks/quantization/artifacts and frameworks/vllm/artifacts
+- Notes: if final naming should also include ShareGPT in the HF repo slug, decide before upload; otherwise keep the slug as requested and make the calibration naming explicit in the model card.
